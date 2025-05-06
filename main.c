@@ -2,16 +2,59 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
+
+#define COLUMN_USERNAME_SIZE 32
+#define COLUMN_EMAIL_SIZE 255
+#define size_of_attribute(Struct, Attribute) sizeof(((Struct*)0)->Attribute)
+
+
+typedef struct{
+  int id;
+  char username[COLUMN_USERNAME_SIZE];
+  char email[COLUMN_EMAIL_SIZE];
+} Row;
+
+const uint32_t ID_SIZE = size_of_attribute(Row, id);
+const uint32_t USERNAME_SIZE = size_of_attribute(Row, username);
+const uint32_t EMAIL_SIZE = size_of_attribute(Row, email);
+const uint32_t ID_OFFSET = 0;
+const uint32_t USERNAME_OFFSET = ID_OFFSET + ID_SIZE;
+const uint32_t EMAIL_OFFSET = USERNAME_OFFSET + USERNAME_SIZE;
+const uint32_t ROW_SIZE = ID_SIZE + USERNAME_SIZE + EMAIL_SIZE;
+
+const uint32_t PAGE_SIZE = 4096;
+#define TABLE_MAX_PAGES 100
+const uint32_t ROWS_PER_PAGE = PAGE_SIZE / ROW_SIZE;
+const uint32_t TABLE_MAX_ROWS = ROWS_PER_PAGE * TABLE_MAX_PAGES;
+
 
 typedef enum {
     META_COMMAND_SUCCESS,
     META_COMMAND_UNRECOGNIZED_COMMAND
 } MetaCommandResult;
-  
+ 
 typedef enum { 
     PREPARE_SUCCESS,
-    PREPARE_UNRECOGNIZED_STATEMENT 
+    PREPARE_UNRECOGNIZED_STATEMENT,
+    PREPARE_SYNTAX_ERROR
 } PrepareResult;
+
+typedef enum{
+  EXECUTE_TABLE_FULL,
+  EXECUTE_SUCCESS
+}ExecuteResult;
+typedef enum {
+  STATEMENT_INSERT,
+  STATEMENT_SELECT 
+}StatementType;
+
+typedef struct {
+  uint32_t num_rows;
+  void* pages[TABLE_MAX_PAGES];
+} Table;
+
+
 
 typedef struct {
   char* buffer;
@@ -19,42 +62,143 @@ typedef struct {
   ssize_t input_length;
 } InputBuffer;
 
-typedef enum { STATEMENT_INSERT, STATEMENT_SELECT } StatementType;
 typedef struct {
   StatementType type;
+  Row row_to_insert;
 } Statement;
+
+Table *new_table(){
+  Table *table = malloc(sizeof(Table));  // FIXED: properly allocate memory
+  if (table == NULL) {
+    printf("Memory allocation error\n");
+    exit(EXIT_FAILURE);
+  }
+  table->num_rows = 0;
+  for (uint32_t i = 0; i < TABLE_MAX_PAGES; i++) {
+    table->pages[i] = NULL;
+  }
+  return table;
+}
+
+void free_table(Table* table) {
+  if (table) {
+    for (int i = 0; i < TABLE_MAX_PAGES; i++) {
+      if (table->pages[i]) {
+        free(table->pages[i]);
+        table->pages[i] = NULL;
+      }
+    }
+    free(table);
+  }
+}
+
+void serialize_row(Row * source, void * destination){
+  memcpy(destination + ID_OFFSET, &(source->id), ID_SIZE);
+  strncpy(destination + USERNAME_OFFSET, source->username, USERNAME_SIZE);
+  strncpy(destination + EMAIL_OFFSET, source->email, EMAIL_SIZE);
+}
+
+void deserialize_row(void *source, Row *destination){
+  memcpy(&(destination->id), source + ID_OFFSET, ID_SIZE);
+  memcpy(&(destination->username), source + USERNAME_OFFSET, USERNAME_SIZE);
+  memcpy(&(destination->email), source + EMAIL_OFFSET, EMAIL_SIZE);
+}
+
+void* row_slot(Table* table, uint32_t row_num) {
+  uint32_t page_num = row_num / ROWS_PER_PAGE;
+  void* page = table->pages[page_num];
+  if (page == NULL) {
+    page = table->pages[page_num] = malloc(PAGE_SIZE);
+    if (page == NULL) {
+      printf("Memory allocation error\n");
+      exit(EXIT_FAILURE);
+    }
+  }
+  uint32_t row_offset = row_num % ROWS_PER_PAGE;
+  uint32_t byte_offset = row_offset * ROW_SIZE;
+  return page + byte_offset;
+}
 
 InputBuffer* new_input_buffer() {
   InputBuffer* input_buffer = malloc(sizeof(InputBuffer));
+  if (input_buffer == NULL) {
+    printf("Memory allocation error\n");
+    exit(EXIT_FAILURE);
+  }
   input_buffer->buffer = NULL;
   input_buffer->buffer_length = 0;
   input_buffer->input_length = 0;
 
   return input_buffer;
 }
-PrepareResult prepare_statement(InputBuffer* input_buffer,Statement *statement){
-    if(strncmp(input_buffer->buffer,"insert",6)==0){
-        statement->type=STATEMENT_INSERT;
+
+PrepareResult prepare_statement(InputBuffer* input_buffer, Statement *statement){
+    if(strncmp(input_buffer->buffer, "insert", 6) == 0){
+        statement->type = STATEMENT_INSERT;
+        
+        char username[COLUMN_USERNAME_SIZE];
+        char email[COLUMN_EMAIL_SIZE];
+        
+        int args_given = sscanf(input_buffer->buffer, "insert %d %s %s", 
+                              &(statement->row_to_insert.id), 
+                              username, 
+                              email);
+        
+        // Copy with bounds checking
+        strncpy(statement->row_to_insert.username, username, COLUMN_USERNAME_SIZE - 1);
+        statement->row_to_insert.username[COLUMN_USERNAME_SIZE - 1] = '\0';
+        
+        strncpy(statement->row_to_insert.email, email, COLUMN_EMAIL_SIZE - 1);
+        statement->row_to_insert.email[COLUMN_EMAIL_SIZE - 1] = '\0';
+        
+        if(args_given < 3){
+          return PREPARE_SYNTAX_ERROR;
+        }
         return PREPARE_SUCCESS;
     }
-    if(strncmp(input_buffer->buffer,"select",6)==0){
-        statement->type=STATEMENT_SELECT;
-        return PREPARE_SUCCESSc;
+    if(strcmp(input_buffer->buffer, "select") == 0){
+        statement->type = STATEMENT_SELECT;
+        return PREPARE_SUCCESS;
     }
     return PREPARE_UNRECOGNIZED_STATEMENT;
 }
-void execute_statement(Statement* statement) {
-    switch (statement->type) {
-      case (STATEMENT_INSERT):
-        printf("This is where we would do an insert.\n");
-        break;
-      case (STATEMENT_SELECT):
-        printf("This is where we would do a select.\n");
-        break;
-    }
+
+void print_row(Row* row) {
+  printf("(%d, %s, %s)\n", row->id, row->username, row->email);
 }
 
-void print_prompt() { printf("sdb > "); }
+ExecuteResult execute_insert(Statement *statement, Table* table){
+  if(table->num_rows >= TABLE_MAX_ROWS){
+    return EXECUTE_TABLE_FULL;
+  }
+  Row *row_to_insert = &(statement->row_to_insert);
+  serialize_row(row_to_insert, row_slot(table, table->num_rows));
+  table->num_rows += 1;
+  return EXECUTE_SUCCESS;
+}
+
+ExecuteResult execute_select(Statement *statement, Table *table){
+  Row row;
+  for (uint32_t i = 0; i < table->num_rows; i++) {
+     deserialize_row(row_slot(table, i), &row);
+     print_row(&row);
+  }
+  return EXECUTE_SUCCESS;
+}
+
+ExecuteResult execute_statement(Statement* statement, Table* table) {
+  switch (statement->type) {
+    case (STATEMENT_INSERT):
+      return execute_insert(statement, table);
+    case (STATEMENT_SELECT):
+      return execute_select(statement, table);
+  }
+  return EXECUTE_SUCCESS; // Default return to avoid compiler warning
+}
+
+void print_prompt() { 
+  printf("sdb > "); 
+}
 
 void read_input(InputBuffer* input_buffer) {
   ssize_t bytes_read =
@@ -70,46 +214,59 @@ void read_input(InputBuffer* input_buffer) {
 }
 
 void close_input_buffer(InputBuffer* input_buffer) {
-    free(input_buffer->buffer);
-    free(input_buffer);
+    if (input_buffer) {
+      free(input_buffer->buffer);
+      free(input_buffer);
+    }
 }
 
 MetaCommandResult metadoCommand(InputBuffer* input_buffer){
-    if(strcmp(input_buffer->buffer,".exit")==0){
-        close_input_buffer(input_buffer);
-        exit(EXIT_SUCCESS);
-    }else{
+    if(strcmp(input_buffer->buffer,".exit") == 0){
+        return META_COMMAND_SUCCESS;
+    } else {
         return META_COMMAND_UNRECOGNIZED_COMMAND;
     }
 }
 
 int main(int argc, char* argv[]) {
+  Table* table = new_table();
   InputBuffer* input_buffer = new_input_buffer();
   while (true) {
     print_prompt();
     read_input(input_buffer);
 
     if (input_buffer->buffer[0] == '.') {
-    switch (metadoCommand(input_buffer)) {
+      switch (metadoCommand(input_buffer)) {
         case (META_COMMAND_SUCCESS):
-            continue;
+          close_input_buffer(input_buffer);
+          free_table(table);
+          exit(EXIT_SUCCESS);
         case (META_COMMAND_UNRECOGNIZED_COMMAND):
-           printf("Unrecognized meta command '%s'\n", input_buffer->buffer);
-           continue;
-        }
+          printf("Unrecognized meta command '%s'\n", input_buffer->buffer);
+          continue;
+      }
     }
 
     Statement statement;
     switch (prepare_statement(input_buffer, &statement)) {
-        case (PREPARE_SUCCESS):
-            break;
-        case (PREPARE_UNRECOGNIZED_STATEMENT):
-           printf("Unrecognized sdb keyword '%s'.\n",
-                  input_buffer->buffer);
+      case (PREPARE_SUCCESS):
+        break;
+      case (PREPARE_SYNTAX_ERROR):
+        printf("Syntax error. Could not parse statement.\n");
+        continue;
+      case (PREPARE_UNRECOGNIZED_STATEMENT):
+        printf("Unrecognized sdb keyword '%s'.\n", input_buffer->buffer);
         continue;
     }
 
-    execute_statement(&statement);
-    printf("Executed.\n");
+    // Execute only once
+    switch (execute_statement(&statement, table)) {
+      case (EXECUTE_SUCCESS):
+        printf("Executed.\n");
+        break;
+      case (EXECUTE_TABLE_FULL):
+        printf("Error: Table full.\n");
+        break;
+    }
   }
 }
