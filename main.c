@@ -82,7 +82,7 @@ typedef struct {
 } Statement;
 
 Pager *pager_open(const char* filename){
-  int fd=open(filename,O_RDWR | O_CREAT | S_IWUSR | S_IRUSR);
+  int fd=open(filename,O_RDWR | O_CREAT,0644);
   if(fd==-1){
     printf("Error in opening file\n");
     exit(EXIT_FAILURE);
