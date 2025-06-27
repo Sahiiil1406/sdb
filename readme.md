@@ -227,6 +227,9 @@ ORM.query('select', (err, result) => {
 - **Concurrency**: Single-threaded with connection queuing
 - **Storage Efficiency**: ~13 rows per 4KB page
 
+![image](https://github.com/user-attachments/assets/70bc6d4a-1448-4a2d-9e65-a470922f435a)
+
+
 ## 🛣️ Roadmap
 
 ### Planned Features
@@ -251,8 +254,8 @@ ORM.query('select', (err, result) => {
 ## 🙏 Acknowledgments
 
 - Inspired by SQLite's architecture and design principles
+- [Reference Article](https://cstack.github.io/db_tutorial/)
 - B+ Tree implementation based on classic database system concepts
 - TCP networking patterns from UNIX socket programming
-
 
 **SimpleDB** - Building databases from scratch, one page at a time! 🗄️
