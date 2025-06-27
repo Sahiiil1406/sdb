@@ -1,4 +1,4 @@
-# SimpleDB - A Lightweight SQL Database Engine
+# SDB - A Lightweight SQL Database Engine
 
 A lightweight, SQLite-inspired database engine built from scratch in C with TCP networking support and a JavaScript ORM for seamless integration.
 
