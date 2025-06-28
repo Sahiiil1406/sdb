@@ -1,3 +1,4 @@
+
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
@@ -6,7 +7,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+int client_socket = -1;
 typedef struct {
   char* buffer;
   size_t buffer_length;
@@ -181,23 +185,34 @@ uint32_t* internal_node_right_child(void* node) {
 uint32_t* internal_node_cell(void* node, uint32_t cell_num) {
   return node + INTERNAL_NODE_HEADER_SIZE + cell_num * INTERNAL_NODE_CELL_SIZE;
 }
+void send_to_client(int client_socket, const char* message) {
+    send(client_socket, message, strlen(message), 0);
+}
 
 uint32_t* internal_node_child(void* node, uint32_t child_num) {
   uint32_t num_keys = *internal_node_num_keys(node);
   if (child_num > num_keys) {
+    char buffer[1024];
+    snprintf(buffer, sizeof(buffer), "Tried to access child_num %d > num_keys %d\n", child_num, num_keys);
+    send_to_client(client_socket, buffer);
     printf("Tried to access child_num %d > num_keys %d\n", child_num, num_keys);
     exit(EXIT_FAILURE);
   } else if (child_num == num_keys) {
     uint32_t* right_child = internal_node_right_child(node);
     if (*right_child == INVALID_PAGE_NUM) {
-      printf("Tried to access right child of node, but was invalid page\n");
+      char buffer[1024];
+      snprintf(buffer, sizeof(buffer), "Tried to access right child of node, but was invalid page\n");
+      send_to_client(client_socket, buffer);
       exit(EXIT_FAILURE);
     }
     return right_child;
   } else {
     uint32_t* child = internal_node_cell(node, child_num);
     if (*child == INVALID_PAGE_NUM) {
-      printf("Tried to access child %d of node, but was invalid page\n", child_num);
+      //printf("Tried to access child %d of node, but was invalid page\n", child_num);
+      char buffer[1024];
+      snprintf(buffer, sizeof(buffer), "Tried to access child %d of node, but was invalid page\n", child_num);
+      send_to_client(client_socket, buffer);
       exit(EXIT_FAILURE);
     }
     return child;
@@ -230,8 +245,10 @@ void* leaf_node_value(void* node, uint32_t cell_num) {
 
 void* get_page(Pager* pager, uint32_t page_num) {
   if (page_num > TABLE_MAX_PAGES) {
-    printf("Tried to fetch page number out of bounds. %d > %d\n", page_num,
-           TABLE_MAX_PAGES);
+    char buffer[1024];
+    snprintf(buffer, sizeof(buffer), "Tried to fetch page number out of bounds. %d > %d\n", page_num,
+             TABLE_MAX_PAGES);
+    send_to_client(client_socket, buffer);
     exit(EXIT_FAILURE);
   }
 
@@ -249,6 +266,9 @@ void* get_page(Pager* pager, uint32_t page_num) {
       lseek(pager->file_descriptor, page_num * PAGE_SIZE, SEEK_SET);
       ssize_t bytes_read = read(pager->file_descriptor, page, PAGE_SIZE);
       if (bytes_read == -1) {
+        char buffer[1024];
+        snprintf(buffer, sizeof(buffer), "Error reading page %d: %d\n", page_num, errno);
+        send_to_client(client_socket, buffer);
         printf("Error reading file: %d\n", errno);
         exit(EXIT_FAILURE);
       }
@@ -273,17 +293,34 @@ uint32_t get_node_max_key(Pager* pager, void* node) {
 }
 
 void print_constants() {
-  printf("ROW_SIZE: %d\n", ROW_SIZE);
-  printf("COMMON_NODE_HEADER_SIZE: %d\n", COMMON_NODE_HEADER_SIZE);
-  printf("LEAF_NODE_HEADER_SIZE: %d\n", LEAF_NODE_HEADER_SIZE);
-  printf("LEAF_NODE_CELL_SIZE: %d\n", LEAF_NODE_CELL_SIZE);
-  printf("LEAF_NODE_SPACE_FOR_CELLS: %d\n", LEAF_NODE_SPACE_FOR_CELLS);
-  printf("LEAF_NODE_MAX_CELLS: %d\n", LEAF_NODE_MAX_CELLS);
+  // printf("ROW_SIZE: %d\n", ROW_SIZE);
+  // printf("COMMON_NODE_HEADER_SIZE: %d\n", COMMON_NODE_HEADER_SIZE);
+  // printf("LEAF_NODE_HEADER_SIZE: %d\n", LEAF_NODE_HEADER_SIZE);
+  // printf("LEAF_NODE_CELL_SIZE: %d\n", LEAF_NODE_CELL_SIZE);
+  // printf("LEAF_NODE_SPACE_FOR_CELLS: %d\n", LEAF_NODE_SPACE_FOR_CELLS);
+  // printf("LEAF_NODE_MAX_CELLS: %d\n", LEAF_NODE_MAX_CELLS);
+  char buffer[1024];
+  snprintf(buffer, sizeof(buffer), "ROW_SIZE: %d\n", ROW_SIZE);
+  send_to_client(client_socket, buffer);
+  snprintf(buffer, sizeof(buffer), "COMMON_NODE_HEADER_SIZE: %d\n", COMMON_NODE_HEADER_SIZE);
+  send_to_client(client_socket, buffer);
+  snprintf(buffer, sizeof(buffer), "LEAF_NODE_HEADER_SIZE: %d\n", LEAF_NODE_HEADER_SIZE);
+  send_to_client(client_socket, buffer);
+  snprintf(buffer, sizeof(buffer), "LEAF_NODE_CELL_SIZE: %d\n", LEAF_NODE_CELL_SIZE);
+  send_to_client(client_socket, buffer);
+  snprintf(buffer, sizeof(buffer), "LEAF_NODE_SPACE_FOR_CELLS: %d\n", LEAF_NODE_SPACE_FOR_CELLS);
+  send_to_client(client_socket, buffer);
+  snprintf(buffer, sizeof(buffer), "LEAF_NODE_MAX_CELLS: %d\n", LEAF_NODE_MAX_CELLS);
+  send_to_client(client_socket, buffer);
+
 }
 
 void indent(uint32_t level) {
   for (uint32_t i = 0; i < level; i++) {
     printf("  ");
+    char buffer[1024];
+    snprintf(buffer, sizeof(buffer), "  ");
+    send_to_client(client_socket, buffer);
   }
 }
 
@@ -437,12 +474,32 @@ Cursor* table_find(Table* table, uint32_t key) {
 }
 
 Cursor* table_start(Table* table) {
-  Cursor* cursor = table_find(table, 0);
+  Cursor* cursor = malloc(sizeof(Cursor));
+  cursor->table = table;
+  cursor->page_num = table->root_page_num;
+  cursor->cell_num = 0;
+  cursor->end_of_table = false;
 
-  void* node = get_page(table->pager, cursor->page_num);
+  void* root_node = get_page(table->pager, table->root_page_num);
+  
+  // Navigate to the leftmost leaf node
+  uint32_t current_page = table->root_page_num;
+  void* node = root_node;
+  
+  while (get_node_type(node) == NODE_INTERNAL) {
+    // Go to the leftmost child (child at index 0)
+    current_page = *internal_node_child(node, 0);
+    node = get_page(table->pager, current_page);
+  }
+  
+  // Now we're at a leaf node - set cursor to this page
+  cursor->page_num = current_page;
+  cursor->cell_num = 0;
+  
+  // Check if this leaf node is empty
   uint32_t num_cells = *leaf_node_num_cells(node);
   cursor->end_of_table = (num_cells == 0);
-
+  
   return cursor;
 }
 
@@ -529,20 +586,26 @@ InputBuffer* new_input_buffer() {
 }
 
 void print_prompt() { printf("db > "); }
-
-void read_input(InputBuffer* input_buffer) {
-  ssize_t bytes_read =
-      getline(&(input_buffer->buffer), &(input_buffer->buffer_length), stdin);
-
-  if (bytes_read <= 0) {
-    printf("Error reading input\n");
-    exit(EXIT_FAILURE);
-  }
-
-  // Ignore trailing newline
-  input_buffer->input_length = bytes_read - 1;
-  input_buffer->buffer[bytes_read - 1] = 0;
+void read_input(InputBuffer* input_buffer, int client_socket) {
+    ssize_t bytes_read = recv(client_socket, input_buffer->buffer, 
+                             input_buffer->buffer_length - 1, 0);
+    
+    if (bytes_read <= 0) {
+        printf("Client disconnected\n");
+        close(client_socket);
+        exit(EXIT_SUCCESS);
+    }
+    
+    input_buffer->input_length = bytes_read;
+    input_buffer->buffer[bytes_read] = '\0';
+    
+    // Remove trailing newline if present
+    if (input_buffer->buffer[bytes_read-1] == '\n') {
+        input_buffer->buffer[bytes_read-1] = '\0';
+        input_buffer->input_length--;
+    }
 }
+
 
 void close_input_buffer(InputBuffer* input_buffer) {
   free(input_buffer->buffer);
@@ -600,9 +663,10 @@ void db_close(Table* table) {
 }
 
 MetaCommandResult do_meta_command(InputBuffer* input_buffer, Table* table) {
-  if (strcmp(input_buffer->buffer, ".exit") == 0) {
+  if (strncmp(input_buffer->buffer, ".exit", 5) == 0) {
     close_input_buffer(input_buffer);
     db_close(table);
+    printf("Exiting...\n");
     exit(EXIT_SUCCESS);
   } else if (strcmp(input_buffer->buffer, ".btree") == 0) {
     printf("Tree:\n");
@@ -652,7 +716,7 @@ PrepareResult prepare_statement(InputBuffer* input_buffer,
   if (strncmp(input_buffer->buffer, "insert", 6) == 0) {
     return prepare_insert(input_buffer, statement);
   }
-  if (strcmp(input_buffer->buffer, "select") == 0) {
+  if (strncmp(input_buffer->buffer, "select",6) == 0) {
     statement->type = STATEMENT_SELECT;
     return PREPARE_SUCCESS;
   }
@@ -973,12 +1037,22 @@ ExecuteResult execute_insert(Statement* statement, Table* table) {
 
 ExecuteResult execute_select(Statement* statement, Table* table) {
   Cursor* cursor = table_start(table);
-
+ 
   Row row;
   while (!(cursor->end_of_table)) {
+    //printf("Executing select statement\n");
     deserialize_row(cursor_value(cursor), &row);
     print_row(&row);
     cursor_advance(cursor);
+    char buffer[1024];
+    snprintf(buffer, sizeof(buffer), "id: %d, username: %s, email: %s\n",
+             row.id, row.username, row.email);
+    send_to_client(client_socket, buffer);
+    // char buffer[1024];
+    // snprintf(buffer, sizeof(buffer), "id: %d, username: %s, email: %s\n",
+    //          row.id, row.username, row.email);
+    // send_to_client(client_socket, buffer);
+
   }
 
   free(cursor);
@@ -994,20 +1068,50 @@ ExecuteResult execute_statement(Statement* statement, Table* table) {
       return execute_select(statement, table);
   }
 }
-
+int create_tcp_server(int port) {
+    int server_fd;
+    struct sockaddr_in address;
+    int opt = 1;
+    
+    server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = INADDR_ANY;
+    address.sin_port = htons(port);
+    
+    bind(server_fd, (struct sockaddr *)&address, sizeof(address));
+    listen(server_fd, 3);
+    
+    return server_fd;
+}
 int main(int argc, char* argv[]) {
-  if (argc < 2) {
-    printf("Must supply a database filename.\n");
-    exit(EXIT_FAILURE);
-  }
+  if (argc < 3) {
+        printf("Usage: %s <database_filename> <port>\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
 
   char* filename = argv[1];
-  Table* table = db_open(filename);
+    int port = atoi(argv[2]);
+    
+    Table* table = db_open(filename);
+    int server_fd = create_tcp_server(port);
+    
+    printf("Server listening on port %d\n", port);
 
-  InputBuffer* input_buffer = new_input_buffer();
+
+   while (true) {
+        struct sockaddr_in client_addr;
+        socklen_t client_len = sizeof(client_addr);
+        client_socket = accept(server_fd, (struct sockaddr*)&client_addr, &client_len);
+        printf("Client connected\n");
+        
+        InputBuffer* input_buffer = new_input_buffer();
+        input_buffer->buffer = malloc(1024);
+        input_buffer->buffer_length = 1024;
   while (true) {
-    print_prompt();
-    read_input(input_buffer);
+    send_to_client(client_socket, "db > ");
+            read_input(input_buffer, client_socket);
 
     if (input_buffer->buffer[0] == '.') {
       switch (do_meta_command(input_buffer, table)) {
@@ -1047,4 +1151,4 @@ int main(int argc, char* argv[]) {
         break;
     }
   }
-}
+}}
