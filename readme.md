@@ -24,6 +24,22 @@ A lightweight, SQLite-inspired database engine built from scratch in C with TCP 
 - **Memory Management**: Smart paging system with lazy loading
 - **Error Handling**: Comprehensive error handling and validation
 
+## 📚 SDB commands
+ Meta commands for database introspection:
+- `.btree`: Displays the current B+ tree structure
+- `.constants`: Lists important constants used in the database
+- `.exit`: Exits the database client
+
+Query commands:
+- `insert <id> <name> <email>`: Inserts a new row into the database
+- `select`: Retrieves all rows from the database
+
+## Makefile Commands
+- `make`: Compiles the database engine
+- `make clean`: Cleans up compiled files and executables
+- `make run`: Runs the database server with a specified database file
+- `make debug`: Compiles the database engine with debugging symbols
+
 ## 🛠️ Tech Stack
 
 - **Language**: C (C99 standard)
@@ -257,5 +273,3 @@ ORM.query('select', (err, result) => {
 - [Reference Article](https://cstack.github.io/db_tutorial/)
 - B+ Tree implementation based on classic database system concepts
 - TCP networking patterns from UNIX socket programming
-
-**SimpleDB** - Building databases from scratch, one page at a time! 🗄️
